@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rastreamento de Localização</title>
+    <title>Rastreador de Grupo de Localização com Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
@@ -15,90 +15,112 @@
             height: 400px;
             border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            margin-bottom: 1.5rem;
         }
     </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
 
     <div class="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full">
-        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Localização em Tempo Real</h1>
-        <p class="text-center text-gray-600 mb-6">
-            Este protótipo demonstra o compartilhamento de localização em tempo real.
-            Sua localização será mostrada no mapa abaixo.
-        </p>
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Localização em Grupo</h1>
+        <p class="text-center text-gray-600 mb-6">Compartilhe sua localização com seu grupo em tempo real.</p>
+        
+        <!-- UI para Login/ID do Usuário -->
+        <div id="auth-container" class="mb-6">
+            <h2 class="text-xl font-semibold mb-2 text-gray-700">Detalhes do Usuário</h2>
+            <div class="p-4 bg-gray-50 rounded-lg shadow-inner">
+                <p class="text-sm font-medium text-gray-500">
+                    Seu ID: <span id="user-id" class="text-gray-800 font-bold break-all">Aguardando...</span>
+                </p>
+            </div>
+        </div>
+
+        <!-- UI para Gerenciamento de Grupo -->
+        <div id="group-container" class="mb-6">
+            <h2 class="text-xl font-semibold mb-2 text-gray-700">Gerenciar Grupo</h2>
+            <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 mb-4">
+                <input type="text" id="group-id-input" placeholder="Digite o ID do grupo..." class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button id="join-group-button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-md">
+                    Entrar no Grupo
+                </button>
+            </div>
+            <button id="create-group-button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-md">
+                Criar Novo Grupo
+            </button>
+        </div>
+        
+        <!-- Painel de Administrador -->
+        <div id="admin-panel" class="mb-6 p-4 bg-gray-50 rounded-lg shadow-inner hidden">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">Painel do Administrador</h2>
+            <p class="text-sm text-gray-500 mb-4">Você é o criador deste grupo. Use a lista abaixo para nomear os membros.</p>
+            
+            <div id="member-list" class="space-y-4">
+                <!-- A lista de membros será renderizada aqui -->
+            </div>
+        </div>
 
         <!-- Mapa para exibir a localização -->
-        <div id="map" class="mb-6"></div>
-
-        <div class="flex items-center justify-between mb-4">
-            <div class="text-sm font-medium text-gray-500">Latitude: <span id="latitude" class="text-gray-800 font-semibold">...</span></div>
-            <div class="text-sm font-medium text-gray-500">Longitude: <span id="longitude" class="text-gray-800 font-semibold">...</span></div>
-        </div>
-
-        <!-- Botões de controle -->
-        <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-            <button id="start-button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg">
-                <i class="fas fa-play"></i> Iniciar Compartilhamento
-            </button>
-            <button id="stop-button" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-xl transition-all duration-300 transform hover:scale-105 shadow-lg opacity-50 cursor-not-allowed" disabled>
-                <i class="fas fa-stop"></i> Parar Compartilhamento
-            </button>
-        </div>
-
+        <div id="map"></div>
+        
         <!-- Mensagens de status e erro -->
         <div id="message-box" class="mt-6 p-4 rounded-xl text-center font-medium hidden"></div>
 
     </div>
 
-    <!-- Script para carregar o Font Awesome (ícones) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/js/all.min.js"></script>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    <!-- Script da lógica do aplicativo -->
-    <script>
-        // Carregando a API do Google Maps dinamicamente
-        function loadGoogleMapsScript() {
-            const script = document.createElement('script');
-            const apiKey = ''; // A API Key não é necessária para este protótipo com OpenStreetMap
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap`;
-            script.defer = true;
-            document.head.appendChild(script);
+        // Variáveis globais fornecidas pelo ambiente
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const authToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let userId;
+        let currentGroupId = null;
+        let geolocationWatchId = null;
+        let firestoreUnsubscribe = null;
+        let isGroupOwner = false;
+        
+        // Inicializa o Firebase
+        function initFirebase() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                
+                // Autenticação do usuário
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('user-id').textContent = userId;
+                    } else {
+                        // Se não houver token, faz o login anônimo
+                        await signInAnonymously(auth);
+                        userId = auth.currentUser.uid;
+                        document.getElementById('user-id').textContent = userId;
+                    }
+                });
+
+            } catch (error) {
+                showMessage(`Erro ao inicializar Firebase: ${error.message}`, 'error');
+                console.error("Firebase initialization error:", error);
+            }
         }
 
-        // Variáveis globais
-        let watchId = null;
+        // Variáveis do mapa e da localização
         let map = null;
-        let marker = null;
-        const startButton = document.getElementById('start-button');
-        const stopButton = document.getElementById('stop-button');
-        const messageBox = document.getElementById('message-box');
-
-        // Inicializa o mapa com um marcador padrão
-        function initMap() {
-            // Em vez de usar Google Maps, vamos usar OpenStreetMap para simplificar o protótipo
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/leaflet/dist/leaflet.js';
-            script.onload = () => {
-                const mapElement = document.getElementById('map');
-                mapElement.innerHTML = '';
-                map = L.map('map').setView([0, 0], 2); // Ponto inicial no mapa
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                }).addTo(map);
-                marker = L.marker([0, 0]).addTo(map);
-            };
-            document.head.appendChild(script);
-
-            const style = document.createElement('link');
-            style.rel = 'stylesheet';
-            style.href = 'https://unpkg.com/leaflet/dist/leaflet.css';
-            document.head.appendChild(style);
-        }
+        const markers = {}; // Objeto para armazenar os marcadores dos usuários
 
         // Função para exibir mensagens na caixa de status
         function showMessage(text, type = 'info') {
+            const messageBox = document.getElementById('message-box');
             messageBox.textContent = text;
-            messageBox.className = `mt-6 p-4 rounded-xl text-center font-medium hidden`; // Limpa as classes
-            messageBox.classList.add('block');
+            messageBox.className = `mt-6 p-4 rounded-xl text-center font-medium block`;
             if (type === 'success') {
                 messageBox.classList.add('bg-green-100', 'text-green-800');
             } else if (type === 'error') {
@@ -108,30 +130,56 @@
             }
         }
 
+        // Inicializa o mapa com um marcador padrão
+        function initMap() {
+            // Usando OpenStreetMap para evitar necessidade de API Key
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/leaflet/dist/leaflet.js';
+            script.onload = () => {
+                const mapElement = document.getElementById('map');
+                mapElement.innerHTML = '';
+                map = L.map('map').setView([0, 0], 2);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+            };
+            document.head.appendChild(script);
+
+            const style = document.createElement('link');
+            style.rel = 'stylesheet';
+            style.href = 'https://unpkg.com/leaflet/dist/leaflet.css';
+            document.head.appendChild(style);
+        }
+
         // Lidar com o sucesso na obtenção da localização
-        function onLocationSuccess(position) {
+        async function onLocationSuccess(position) {
             const lat = position.coords.latitude;
             const lon = position.coords.longitude;
-
-            document.getElementById('latitude').textContent = lat.toFixed(6);
-            document.getElementById('longitude').textContent = lon.toFixed(6);
-
-            // Atualiza o marcador no mapa
-            if (map) {
-                const newLatLng = [lat, lon];
-                marker.setLatLng(newLatLng);
-                map.setView(newLatLng, 15); // Centraliza o mapa na nova localização e ajusta o zoom
+            
+            if (currentGroupId && userId) {
+                // Atualiza a localização no Firestore
+                const userDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}/users/${userId}`);
+                try {
+                    await setDoc(userDocRef, {
+                        lat,
+                        lon,
+                        lastUpdate: new Date(),
+                        id: userId // Garante que o ID do usuário está salvo
+                    }, { merge: true }); // 'merge: true' evita sobrescrever outros campos do documento
+                } catch (e) {
+                    console.error("Erro ao atualizar a localização no Firestore:", e);
+                    showMessage("Erro ao atualizar a localização no servidor.", 'error');
+                }
             }
-
-            showMessage('Localização atualizada com sucesso!', 'success');
         }
 
         // Lidar com erros na obtenção da localização
         function onLocationError(error) {
+            console.error("Erro de geolocalização:", error);
             let errorMessage = '';
             switch(error.code) {
                 case error.PERMISSION_DENIED:
-                    errorMessage = "Permissão de geolocalização negada pelo usuário.";
+                    errorMessage = "Permissão de geolocalização negada. Por favor, habilite a permissão.";
                     break;
                 case error.POSITION_UNAVAILABLE:
                     errorMessage = "Localização indisponível. Verifique se o GPS está ativado.";
@@ -145,44 +193,208 @@
             showMessage(errorMessage, 'error');
         }
 
-        // Inicia o rastreamento da localização
-        function startTracking() {
+        // Renderiza o painel de administrador e a lista de membros
+        function renderAdminPanel(members) {
+            const adminPanel = document.getElementById('admin-panel');
+            const memberList = document.getElementById('member-list');
+
+            if (isGroupOwner) {
+                adminPanel.classList.remove('hidden');
+                memberList.innerHTML = '';
+                members.forEach(member => {
+                    const memberDiv = document.createElement('div');
+                    memberDiv.classList.add('flex', 'flex-col', 'sm:flex-row', 'items-start', 'sm:items-center', 'space-y-2', 'sm:space-y-0', 'sm:space-x-3', 'p-2', 'bg-gray-100', 'rounded-md');
+
+                    const memberIdText = document.createElement('p');
+                    memberIdText.classList.add('text-sm', 'font-mono', 'text-gray-600', 'break-all', 'flex-grow');
+                    memberIdText.textContent = `ID: ${member.id}`;
+
+                    const memberNameInput = document.createElement('input');
+                    memberNameInput.type = 'text';
+                    memberNameInput.placeholder = `Nome atual: ${member.name || 'Sem nome'}`;
+                    memberNameInput.classList.add('p-2', 'border', 'border-gray-300', 'rounded-md', 'flex-grow');
+                    
+                    const updateNameButton = document.createElement('button');
+                    updateNameButton.textContent = 'Nomear';
+                    updateNameButton.classList.add('bg-blue-500', 'hover:bg-blue-600', 'text-white', 'py-2', 'px-4', 'rounded-md', 'transition-colors');
+                    updateNameButton.addEventListener('click', () => updateMemberName(member.id, memberNameInput.value));
+
+                    memberDiv.appendChild(memberIdText);
+                    memberDiv.appendChild(memberNameInput);
+                    memberDiv.appendChild(updateNameButton);
+                    memberList.appendChild(memberDiv);
+                });
+            } else {
+                adminPanel.classList.add('hidden');
+            }
+        }
+        
+        // Atualiza o nome do membro no Firestore
+        async function updateMemberName(memberId, name) {
+            if (!name || name.trim() === "") {
+                showMessage("Por favor, digite um nome válido.", 'error');
+                return;
+            }
+            try {
+                const userDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}/users/${memberId}`);
+                await updateDoc(userDocRef, { name: name.trim() });
+                showMessage(`Nome do membro com ID ${memberId.substring(0, 5)}... atualizado para '${name}'.`, 'success');
+            } catch (e) {
+                console.error("Erro ao atualizar o nome:", e);
+                showMessage("Erro ao atualizar o nome no servidor.", 'error');
+            }
+        }
+
+        // Inicia o rastreamento e a sincronização com o Firestore
+        async function startTrackingAndFirestore() {
+            // Para o rastreamento anterior, se houver
+            stopTracking();
+            
+            // Verifica se o usuário é o dono do grupo
+            const groupDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}`);
+            const groupDoc = await getDoc(groupDocRef);
+            if (groupDoc.exists() && groupDoc.data().ownerId === userId) {
+                isGroupOwner = true;
+            } else {
+                isGroupOwner = false;
+            }
+
+            // Inicia o rastreamento de geolocalização do navegador
             if (navigator.geolocation) {
-                // Habilita o watchPosition para obter atualizações em tempo real
-                watchId = navigator.geolocation.watchPosition(onLocationSuccess, onLocationError, {
+                geolocationWatchId = navigator.geolocation.watchPosition(onLocationSuccess, onLocationError, {
                     enableHighAccuracy: true,
                     maximumAge: 0,
                     timeout: 5000
                 });
-                showMessage('Compartilhamento de localização iniciado.', 'info');
-                startButton.disabled = true;
-                startButton.classList.add('opacity-50', 'cursor-not-allowed');
-                stopButton.disabled = false;
-                stopButton.classList.remove('opacity-50', 'cursor-not-allowed');
             } else {
-                showMessage('Seu navegador não suporta Geolocation API.', 'error');
+                showMessage('Seu navegador não suporta a Geolocation API.', 'error');
             }
+            
+            // Inicia o listener em tempo real do Firestore para o grupo
+            const usersCollectionRef = collection(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}/users`);
+            firestoreUnsubscribe = onSnapshot(usersCollectionRef, (querySnapshot) => {
+                const members = [];
+                querySnapshot.docs.forEach(doc => {
+                    members.push({ id: doc.id, ...doc.data() });
+                });
+                
+                renderAdminPanel(members);
+
+                querySnapshot.docChanges().forEach(change => {
+                    const userData = change.doc.data();
+                    const memberId = change.doc.id;
+                    const lat = userData.lat;
+                    const lon = userData.lon;
+                    const name = userData.name || memberId;
+
+                    if (change.type === "added" || change.type === "modified") {
+                        if (markers[memberId]) {
+                            // Atualiza a posição do marcador existente
+                            markers[memberId].setLatLng([lat, lon]);
+                            markers[memberId].setPopupContent(`<b>${name}</b><br>ID: ${memberId.substring(0, 5)}...`);
+                        } else {
+                            // Cria um novo marcador para o novo usuário
+                            const color = memberId === userId ? 'blue' : 'red';
+                            const newMarker = L.circleMarker([lat, lon], {
+                                radius: 8,
+                                color: color,
+                                fillColor: color,
+                                fillOpacity: 0.8
+                            }).addTo(map)
+                            .bindPopup(`<b>${name}</b><br>ID: ${memberId.substring(0, 5)}...`);
+                            markers[memberId] = newMarker;
+                        }
+                    } else if (change.type === "removed") {
+                        if (markers[memberId]) {
+                            map.removeLayer(markers[memberId]);
+                            delete markers[memberId];
+                        }
+                    }
+                });
+                // Ajusta o mapa para mostrar todos os marcadores
+                const allMarkers = Object.values(markers);
+                if (allMarkers.length > 0) {
+                    const group = new L.featureGroup(allMarkers);
+                    map.fitBounds(group.getBounds(), { padding: [50, 50] });
+                }
+            }, (error) => {
+                console.error("Erro ao escutar o Firestore:", error);
+                showMessage("Erro ao carregar dados do grupo.", 'error');
+            });
+
+            showMessage(`Você entrou no grupo com ID: ${currentGroupId}. O rastreamento está ativo.`, 'success');
         }
 
-        // Para o rastreamento da localização
+        // Para o rastreamento de geolocalização e o listener do Firestore
         function stopTracking() {
-            if (watchId !== null) {
-                navigator.geolocation.clearWatch(watchId);
-                watchId = null;
-                showMessage('Compartilhamento de localização parado.', 'info');
-                startButton.disabled = false;
-                startButton.classList.remove('opacity-50', 'cursor-not-allowed');
-                stopButton.disabled = true;
-                stopButton.classList.add('opacity-50', 'cursor-not-allowed');
+            if (geolocationWatchId !== null) {
+                navigator.geolocation.clearWatch(geolocationWatchId);
+                geolocationWatchId = null;
             }
+            if (firestoreUnsubscribe) {
+                firestoreUnsubscribe();
+                firestoreUnsubscribe = null;
+            }
+            for (const markerId in markers) {
+                map.removeLayer(markers[markerId]);
+                delete markers[markerId];
+            }
+            document.getElementById('admin-panel').classList.add('hidden');
+        }
+
+        // Lógica para criar um novo grupo
+        async function createGroup() {
+            if (!userId) {
+                showMessage('Usuário não autenticado. Aguarde ou tente novamente.', 'error');
+                return;
+            }
+
+            const newGroupId = crypto.randomUUID().substring(0, 8);
+            currentGroupId = newGroupId;
+            document.getElementById('group-id-input').value = newGroupId;
+            
+            // Cria um documento inicial para o grupo e armazena o ownerId
+            const groupDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${newGroupId}`);
+            await setDoc(groupDocRef, { createdAt: new Date(), ownerId: userId });
+
+            startTrackingAndFirestore();
+        }
+        
+        // Lógica para entrar em um grupo existente
+        async function joinGroup() {
+            if (!userId) {
+                showMessage('Usuário não autenticado. Aguarde ou tente novamente.', 'error');
+                return;
+            }
+
+            const groupId = document.getElementById('group-id-input').value.trim();
+            if (!groupId) {
+                showMessage('Por favor, digite um ID de grupo.', 'error');
+                return;
+            }
+            
+            // Verifica se o grupo existe
+            const groupDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${groupId}`);
+            const groupDoc = await getDoc(groupDocRef);
+
+            if (!groupDoc.exists()) {
+                showMessage(`O grupo com ID '${groupId}' não foi encontrado.`, 'error');
+                return;
+            }
+
+            currentGroupId = groupId;
+            startTrackingAndFirestore();
         }
 
         // Adiciona os event listeners aos botões
-        startButton.addEventListener('click', startTracking);
-        stopButton.addEventListener('click', stopTracking);
+        document.getElementById('join-group-button').addEventListener('click', joinGroup);
+        document.getElementById('create-group-button').addEventListener('click', createGroup);
 
-        // Inicializa o mapa ao carregar a página
-        window.onload = initMap;
+        // Inicializa o aplicativo
+        window.onload = () => {
+            initMap();
+            initFirebase();
+        };
     </script>
 </body>
 </html>
