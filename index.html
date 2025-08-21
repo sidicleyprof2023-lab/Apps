@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rastreador de Grupo de Localização com Admin</title>
+    <title>Rastreador de Localização em Grupo</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
         }
         #map {
             width: 100%;
@@ -16,39 +17,37 @@
             border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             margin-bottom: 1.5rem;
+            position: relative;
+        }
+        .leaflet-popup-content-wrapper {
+            border-radius: 8px;
+        }
+        .leaflet-popup-tip {
+            background: #fff;
         }
     </style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+<body class="flex items-center justify-center min-h-screen p-4">
 
-    <div class="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full">
+    <div class="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full transition-all duration-300">
         <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Localização em Grupo</h1>
         <p class="text-center text-gray-600 mb-6">Compartilhe sua localização com seu grupo em tempo real.</p>
 
-        <!-- Seção para configurar o Firebase -->
-        <div id="firebase-config-container" class="mb-6 p-4 bg-yellow-50 rounded-lg shadow-inner">
-            <h2 class="text-xl font-semibold mb-2 text-gray-700">Passo 1: Cole a Configuração do Firebase</h2>
-            <p class="text-sm text-gray-600 mb-4">
-                Por favor, cole sua configuração JSON do Firebase abaixo. Você pode encontrá-la nas configurações do seu projeto no console do Firebase.
-            </p>
-            <textarea id="firebase-config-input" class="w-full p-2 h-24 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"></textarea>
-            <button id="load-config-button" class="mt-2 w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-md">
-                Carregar Configuração
-            </button>
-        </div>
-        
         <!-- UI para Login/ID do Usuário -->
-        <div id="auth-container" class="mb-6 hidden">
+        <div id="auth-container" class="mb-6">
             <h2 class="text-xl font-semibold mb-2 text-gray-700">Detalhes do Usuário</h2>
             <div class="p-4 bg-gray-50 rounded-lg shadow-inner">
                 <p class="text-sm font-medium text-gray-500">
                     Seu ID: <span id="user-id" class="text-gray-800 font-bold break-all">Aguardando...</span>
                 </p>
+                <p class="text-sm font-medium text-gray-500 mt-2">
+                    Status: <span id="status-message" class="text-blue-600 font-bold">Iniciando...</span>
+                </p>
             </div>
         </div>
 
         <!-- UI para Gerenciamento de Grupo -->
-        <div id="group-container" class="mb-6 hidden">
+        <div id="group-container" class="mb-6">
             <h2 class="text-xl font-semibold mb-2 text-gray-700">Gerenciar Grupo</h2>
             <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 mb-4">
                 <input type="text" id="group-id-input" placeholder="Digite o ID do grupo..." class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -74,17 +73,16 @@
         <!-- Mapa para exibir a localização -->
         <div id="map"></div>
         
-        <!-- Mensagens de status e erro -->
-        <div id="message-box" class="mt-6 p-4 rounded-xl text-center font-medium hidden"></div>
-
     </div>
 
     <!-- Firebase SDKs -->
     <script type="module">
+        // Importa os módulos necessários do Firebase SDK
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
+        
+        // Declaração de variáveis globais para os serviços e estado do app
         let db;
         let auth;
         let userId;
@@ -92,13 +90,20 @@
         let geolocationWatchId = null;
         let firestoreUnsubscribe = null;
         let isGroupOwner = false;
-        let isFirebaseInitialized = false;
+        let map = null;
+        const markers = {}; // Objeto para armazenar os marcadores dos usuários
 
-        // Função para exibir mensagens na caixa de status
+        // Função para exibir mensagens de status
+        function showStatus(text) {
+            document.getElementById('status-message').textContent = text;
+        }
+
+        // Função para exibir mensagens na caixa de status do usuário
         function showMessage(text, type = 'info') {
-            const messageBox = document.getElementById('message-box');
+            const messageBox = document.createElement('div');
             messageBox.textContent = text;
-            messageBox.className = `mt-6 p-4 rounded-xl text-center font-medium block`;
+            messageBox.classList.add('mt-4', 'p-4', 'rounded-xl', 'text-center', 'font-medium');
+            
             if (type === 'success') {
                 messageBox.classList.add('bg-green-100', 'text-green-800');
             } else if (type === 'error') {
@@ -106,62 +111,30 @@
             } else {
                 messageBox.classList.add('bg-blue-100', 'text-blue-800');
             }
-        }
-
-        // Inicializa o Firebase e gerencia a autenticação
-        async function initFirebase() {
-            if (isFirebaseInitialized) {
-                showMessage('Firebase já está inicializado. Tente criar ou entrar em um grupo.', 'info');
-                return;
+            
+            // Remove mensagens anteriores e adiciona a nova
+            const parentDiv = document.querySelector('.bg-white');
+            const existingMessage = parentDiv.querySelector('.mt-4');
+            if (existingMessage) {
+                parentDiv.removeChild(existingMessage);
             }
-
-            try {
-                const firebaseConfigInput = document.getElementById('firebase-config-input').value;
-                let userConfig = {};
-                try {
-                    userConfig = JSON.parse(firebaseConfigInput);
-                } catch (e) {
-                    showMessage('Erro: A configuração do Firebase não é um JSON válido. Verifique se está tudo correto.', 'error');
-                    console.error('JSON parsing error:', e);
-                    return;
-                }
-
-                const app = initializeApp(userConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
-
-                // Autenticação anônima do usuário para obter o ID
-                await signInAnonymously(auth);
-                userId = auth.currentUser.uid;
-                
-                document.getElementById('user-id').textContent = userId;
-                document.getElementById('firebase-config-container').classList.add('hidden');
-                document.getElementById('auth-container').classList.remove('hidden');
-                document.getElementById('group-container').classList.remove('hidden');
-                showMessage('Firebase inicializado com sucesso!', 'success');
-                isFirebaseInitialized = true;
-
-            } catch (error) {
-                showMessage(`Erro ao inicializar Firebase: ${error.message}. Por favor, verifique sua configuração.`, 'error');
-                console.error("Firebase initialization error:", error);
-            }
+            parentDiv.appendChild(messageBox);
         }
-
-        // Variáveis do mapa e da localização
-        let map = null;
-        const markers = {}; // Objeto para armazenar os marcadores dos usuários
 
         // Inicializa o mapa com um marcador padrão
         function initMap() {
+            // Carrega os scripts do Leaflet.js dinamicamente
             const script = document.createElement('script');
             script.src = 'https://unpkg.com/leaflet/dist/leaflet.js';
             script.onload = () => {
                 const mapElement = document.getElementById('map');
-                mapElement.innerHTML = '';
-                map = L.map('map').setView([0, 0], 2);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                }).addTo(map);
+                if (mapElement) {
+                    mapElement.innerHTML = '';
+                    map = L.map('map').setView([0, 0], 2);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    }).addTo(map);
+                }
             };
             document.head.appendChild(script);
 
@@ -169,6 +142,38 @@
             style.rel = 'stylesheet';
             style.href = 'https://unpkg.com/leaflet/dist/leaflet.css';
             document.head.appendChild(style);
+        }
+
+        // Inicializa o Firebase e a autenticação
+        async function initFirebase() {
+            try {
+                showStatus('Autenticando...');
+                // O ambiente do Canvas injeta estas variáveis globais
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+                // Inicializa o app e os serviços
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Autentica o usuário usando o token customizado
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                userId = auth.currentUser.uid;
+                document.getElementById('user-id').textContent = userId;
+                showStatus('Pronto para usar!');
+
+            } catch (error) {
+                console.error("Erro ao inicializar Firebase:", error);
+                showStatus('Erro de inicialização');
+                showMessage(`Erro ao inicializar Firebase: ${error.message}.`, 'error');
+            }
         }
 
         // Lidar com o sucesso na obtenção da localização
@@ -185,9 +190,10 @@
                         lastUpdate: new Date(),
                         id: userId
                     }, { merge: true });
+                    showStatus('Localização atualizada');
                 } catch (e) {
                     console.error("Erro ao atualizar a localização no Firestore:", e);
-                    showMessage("Erro ao atualizar a localização no servidor.", 'error');
+                    showStatus("Erro de atualização");
                 }
             }
         }
@@ -209,6 +215,7 @@
                 default:
                     errorMessage = "Ocorreu um erro desconhecido na geolocalização.";
             }
+            showStatus("Erro de localização");
             showMessage(errorMessage, 'error');
         }
 
@@ -216,6 +223,13 @@
         function renderAdminPanel(members) {
             const adminPanel = document.getElementById('admin-panel');
             const memberList = document.getElementById('member-list');
+            const currentUser = members.find(m => m.id === userId);
+
+            // Adiciona o nome do usuário atual se ele existir
+            if (currentUser && currentUser.name) {
+                const userIdElement = document.getElementById('user-id');
+                userIdElement.textContent = `${currentUser.name} (ID: ${userId})`;
+            }
 
             if (isGroupOwner) {
                 adminPanel.classList.remove('hidden');
@@ -224,13 +238,16 @@
                     const memberDiv = document.createElement('div');
                     memberDiv.classList.add('flex', 'flex-col', 'sm:flex-row', 'items-start', 'sm:items-center', 'space-y-2', 'sm:space-y-0', 'sm:space-x-3', 'p-2', 'bg-gray-100', 'rounded-md');
 
+                    const memberName = member.name || member.id;
+                    const memberIdDisplay = member.id === userId ? `Você (ID: ${member.id})` : `ID: ${member.id}`;
+
                     const memberIdText = document.createElement('p');
                     memberIdText.classList.add('text-sm', 'font-mono', 'text-gray-600', 'break-all', 'flex-grow');
-                    memberIdText.textContent = `ID: ${member.id}`;
+                    memberIdText.textContent = memberIdDisplay;
 
                     const memberNameInput = document.createElement('input');
                     memberNameInput.type = 'text';
-                    memberNameInput.placeholder = `Nome atual: ${member.name || 'Sem nome'}`;
+                    memberNameInput.placeholder = `Nome atual: ${memberName}`;
                     memberNameInput.classList.add('p-2', 'border', 'border-gray-300', 'rounded-md', 'flex-grow');
                     
                     const updateNameButton = document.createElement('button');
@@ -238,7 +255,6 @@
                     updateNameButton.classList.add('bg-blue-500', 'hover:bg-blue-600', 'text-white', 'py-2', 'px-4', 'rounded-md', 'transition-colors');
                     updateNameButton.addEventListener('click', () => updateMemberName(member.id, memberNameInput.value));
 
-                    memberDiv.appendChild(memberIdText);
                     memberDiv.appendChild(memberNameInput);
                     memberDiv.appendChild(updateNameButton);
                     memberList.appendChild(memberDiv);
@@ -266,8 +282,8 @@
 
         // Inicia o rastreamento e a sincronização com o Firestore
         async function startTrackingAndFirestore() {
-            if (!isFirebaseInitialized) {
-                showMessage('Por favor, carregue sua configuração do Firebase primeiro.', 'error');
+            if (!userId) {
+                showMessage('Usuário não autenticado. Aguarde ou tente novamente.', 'error');
                 return;
             }
 
@@ -309,24 +325,26 @@
                     const memberId = change.doc.id;
                     const lat = userData.lat;
                     const lon = userData.lon;
-                    const name = userData.name || memberId;
+                    const name = userData.name || memberId.substring(0, 5) + '...';
 
                     if (change.type === "added" || change.type === "modified") {
-                        if (markers[memberId]) {
-                            // Atualiza a posição do marcador existente
-                            markers[memberId].setLatLng([lat, lon]);
-                            markers[memberId].setPopupContent(`<b>${name}</b><br>ID: ${memberId.substring(0, 5)}...`);
-                        } else {
-                            // Cria um novo marcador para o novo usuário
-                            const color = memberId === userId ? 'blue' : 'red';
-                            const newMarker = L.circleMarker([lat, lon], {
-                                radius: 8,
-                                color: color,
-                                fillColor: color,
-                                fillOpacity: 0.8
-                            }).addTo(map)
-                            .bindPopup(`<b>${name}</b><br>ID: ${memberId.substring(0, 5)}...`);
-                            markers[memberId] = newMarker;
+                        if (lat && lon) {
+                            if (markers[memberId]) {
+                                // Atualiza a posição do marcador existente
+                                markers[memberId].setLatLng([lat, lon]);
+                                markers[memberId].setPopupContent(`<b>${name}</b><br>ID: ${memberId.substring(0, 5)}...`);
+                            } else {
+                                // Cria um novo marcador para o novo usuário
+                                const color = memberId === userId ? 'blue' : 'red';
+                                const newMarker = L.circleMarker([lat, lon], {
+                                    radius: 8,
+                                    color: color,
+                                    fillColor: color,
+                                    fillOpacity: 0.8
+                                }).addTo(map)
+                                .bindPopup(`<b>${name}</b><br>ID: ${memberId.substring(0, 5)}...`);
+                                markers[memberId] = newMarker;
+                            }
                         }
                     } else if (change.type === "removed") {
                         if (markers[memberId]) {
@@ -408,11 +426,15 @@
             startTrackingAndFirestore();
         }
 
-        document.getElementById('load-config-button').addEventListener('click', initFirebase);
+        // Event Listeners
         document.getElementById('join-group-button').addEventListener('click', joinGroup);
         document.getElementById('create-group-button').addEventListener('click', createGroup);
-
-        window.onload = initMap;
+        
+        // Inicializa o mapa e o Firebase quando a página é carregada
+        window.onload = async () => {
+            initMap();
+            await initFirebase();
+        };
     </script>
 </body>
 </html>
