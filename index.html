@@ -24,9 +24,21 @@
     <div class="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full">
         <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Localização em Grupo</h1>
         <p class="text-center text-gray-600 mb-6">Compartilhe sua localização com seu grupo em tempo real.</p>
+
+        <!-- Seção para configurar o Firebase -->
+        <div id="firebase-config-container" class="mb-6 p-4 bg-yellow-50 rounded-lg shadow-inner">
+            <h2 class="text-xl font-semibold mb-2 text-gray-700">Passo 1: Cole a Configuração do Firebase</h2>
+            <p class="text-sm text-gray-600 mb-4">
+                Por favor, cole sua configuração JSON do Firebase abaixo. Você pode encontrá-la nas configurações do seu projeto no console do Firebase.
+            </p>
+            <textarea id="firebase-config-input" class="w-full p-2 h-24 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"></textarea>
+            <button id="load-config-button" class="mt-2 w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-md">
+                Carregar Configuração
+            </button>
+        </div>
         
         <!-- UI para Login/ID do Usuário -->
-        <div id="auth-container" class="mb-6">
+        <div id="auth-container" class="mb-6 hidden">
             <h2 class="text-xl font-semibold mb-2 text-gray-700">Detalhes do Usuário</h2>
             <div class="p-4 bg-gray-50 rounded-lg shadow-inner">
                 <p class="text-sm font-medium text-gray-500">
@@ -36,7 +48,7 @@
         </div>
 
         <!-- UI para Gerenciamento de Grupo -->
-        <div id="group-container" class="mb-6">
+        <div id="group-container" class="mb-6 hidden">
             <h2 class="text-xl font-semibold mb-2 text-gray-700">Gerenciar Grupo</h2>
             <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 mb-4">
                 <input type="text" id="group-id-input" placeholder="Digite o ID do grupo..." class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -75,7 +87,6 @@
 
         // Variáveis globais fornecidas pelo ambiente
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const authToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         let db;
@@ -85,34 +96,7 @@
         let geolocationWatchId = null;
         let firestoreUnsubscribe = null;
         let isGroupOwner = false;
-        
-        // Inicializa o Firebase e gerencia a autenticação
-        async function initFirebase() {
-            try {
-                const app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
-
-                // Usa o token de autenticação se ele existir, caso contrário, faz login anonimamente.
-                if (authToken) {
-                    await signInWithCustomToken(auth, authToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-                
-                // Define o userId APENAS após a autenticação ser concluída.
-                userId = auth.currentUser.uid;
-                document.getElementById('user-id').textContent = userId;
-
-            } catch (error) {
-                showMessage(`Erro ao inicializar Firebase: ${error.message}`, 'error');
-                console.error("Firebase initialization error:", error);
-            }
-        }
-
-        // Variáveis do mapa e da localização
-        let map = null;
-        const markers = {}; // Objeto para armazenar os marcadores dos usuários
+        let isFirebaseInitialized = false;
 
         // Função para exibir mensagens na caixa de status
         function showMessage(text, type = 'info') {
@@ -128,9 +112,51 @@
             }
         }
 
+        // Inicializa o Firebase e gerencia a autenticação
+        async function initFirebase() {
+            if (isFirebaseInitialized) {
+                showMessage('Firebase já está inicializado. Tente criar ou entrar em um grupo.', 'info');
+                return;
+            }
+
+            try {
+                const firebaseConfigInput = document.getElementById('firebase-config-input').value;
+                let userConfig = {};
+                try {
+                    userConfig = JSON.parse(firebaseConfigInput);
+                } catch (e) {
+                    showMessage('Erro: A configuração do Firebase não é um JSON válido. Verifique se está tudo correto.', 'error');
+                    console.error('JSON parsing error:', e);
+                    return;
+                }
+
+                const app = initializeApp(userConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Autenticação anônima do usuário para obter o ID
+                await signInAnonymously(auth);
+                userId = auth.currentUser.uid;
+                
+                document.getElementById('user-id').textContent = userId;
+                document.getElementById('firebase-config-container').classList.add('hidden');
+                document.getElementById('auth-container').classList.remove('hidden');
+                document.getElementById('group-container').classList.remove('hidden');
+                showMessage('Firebase inicializado com sucesso!', 'success');
+                isFirebaseInitialized = true;
+
+            } catch (error) {
+                showMessage(`Erro ao inicializar Firebase: ${error.message}. Por favor, verifique sua configuração.`, 'error');
+                console.error("Firebase initialization error:", error);
+            }
+        }
+
+        // Variáveis do mapa e da localização
+        let map = null;
+        const markers = {}; // Objeto para armazenar os marcadores dos usuários
+
         // Inicializa o mapa com um marcador padrão
         function initMap() {
-            // Usando OpenStreetMap para evitar necessidade de API Key
             const script = document.createElement('script');
             script.src = 'https://unpkg.com/leaflet/dist/leaflet.js';
             script.onload = () => {
@@ -155,15 +181,14 @@
             const lon = position.coords.longitude;
             
             if (currentGroupId && userId) {
-                // Atualiza a localização no Firestore
                 const userDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}/users/${userId}`);
                 try {
                     await setDoc(userDocRef, {
                         lat,
                         lon,
                         lastUpdate: new Date(),
-                        id: userId // Garante que o ID do usuário está salvo
-                    }, { merge: true }); // 'merge: true' evita sobrescrever outros campos do documento
+                        id: userId
+                    }, { merge: true });
                 } catch (e) {
                     console.error("Erro ao atualizar a localização no Firestore:", e);
                     showMessage("Erro ao atualizar a localização no servidor.", 'error');
@@ -245,6 +270,11 @@
 
         // Inicia o rastreamento e a sincronização com o Firestore
         async function startTrackingAndFirestore() {
+            if (!isFirebaseInitialized) {
+                showMessage('Por favor, carregue sua configuração do Firebase primeiro.', 'error');
+                return;
+            }
+
             // Para o rastreamento anterior, se houver
             stopTracking();
             
@@ -351,7 +381,6 @@
             currentGroupId = newGroupId;
             document.getElementById('group-id-input').value = newGroupId;
             
-            // Cria um documento inicial para o grupo e armazena o ownerId
             const groupDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${newGroupId}`);
             await setDoc(groupDocRef, { createdAt: new Date(), ownerId: userId });
 
@@ -371,7 +400,6 @@
                 return;
             }
             
-            // Verifica se o grupo existe
             const groupDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${groupId}`);
             const groupDoc = await getDoc(groupDocRef);
 
@@ -384,15 +412,11 @@
             startTrackingAndFirestore();
         }
 
-        // Adiciona os event listeners aos botões
+        document.getElementById('load-config-button').addEventListener('click', initFirebase);
         document.getElementById('join-group-button').addEventListener('click', joinGroup);
         document.getElementById('create-group-button').addEventListener('click', createGroup);
 
-        // Inicializa o aplicativo
-        window.onload = () => {
-            initMap();
-            initFirebase();
-        };
+        window.onload = initMap;
     </script>
 </body>
 </html>
