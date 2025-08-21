@@ -70,7 +70,7 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Variáveis globais fornecidas pelo ambiente
@@ -86,25 +86,23 @@
         let firestoreUnsubscribe = null;
         let isGroupOwner = false;
         
-        // Inicializa o Firebase
-        function initFirebase() {
+        // Inicializa o Firebase e gerencia a autenticação
+        async function initFirebase() {
             try {
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
+
+                // Usa o token de autenticação se ele existir, caso contrário, faz login anonimamente.
+                if (authToken) {
+                    await signInWithCustomToken(auth, authToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
                 
-                // Autenticação do usuário
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        document.getElementById('user-id').textContent = userId;
-                    } else {
-                        // Se não houver token, faz o login anônimo
-                        await signInAnonymously(auth);
-                        userId = auth.currentUser.uid;
-                        document.getElementById('user-id').textContent = userId;
-                    }
-                });
+                // Define o userId APENAS após a autenticação ser concluída.
+                userId = auth.currentUser.uid;
+                document.getElementById('user-id').textContent = userId;
 
             } catch (error) {
                 showMessage(`Erro ao inicializar Firebase: ${error.message}`, 'error');
