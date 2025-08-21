@@ -82,12 +82,8 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, query, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Variáveis globais fornecidas pelo ambiente
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const authToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let db;
         let auth;
@@ -181,7 +177,7 @@
             const lon = position.coords.longitude;
             
             if (currentGroupId && userId) {
-                const userDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}/users/${userId}`);
+                const userDocRef = doc(db, `groups/${currentGroupId}/users/${userId}`);
                 try {
                     await setDoc(userDocRef, {
                         lat,
@@ -259,7 +255,7 @@
                 return;
             }
             try {
-                const userDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}/users/${memberId}`);
+                const userDocRef = doc(db, `groups/${currentGroupId}/users/${memberId}`);
                 await updateDoc(userDocRef, { name: name.trim() });
                 showMessage(`Nome do membro com ID ${memberId.substring(0, 5)}... atualizado para '${name}'.`, 'success');
             } catch (e) {
@@ -279,7 +275,7 @@
             stopTracking();
             
             // Verifica se o usuário é o dono do grupo
-            const groupDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}`);
+            const groupDocRef = doc(db, `groups/${currentGroupId}`);
             const groupDoc = await getDoc(groupDocRef);
             if (groupDoc.exists() && groupDoc.data().ownerId === userId) {
                 isGroupOwner = true;
@@ -299,7 +295,7 @@
             }
             
             // Inicia o listener em tempo real do Firestore para o grupo
-            const usersCollectionRef = collection(db, `/artifacts/${appId}/public/data/groups/${currentGroupId}/users`);
+            const usersCollectionRef = collection(db, `groups/${currentGroupId}/users`);
             firestoreUnsubscribe = onSnapshot(usersCollectionRef, (querySnapshot) => {
                 const members = [];
                 querySnapshot.docs.forEach(doc => {
@@ -381,7 +377,7 @@
             currentGroupId = newGroupId;
             document.getElementById('group-id-input').value = newGroupId;
             
-            const groupDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${newGroupId}`);
+            const groupDocRef = doc(db, `groups/${newGroupId}`);
             await setDoc(groupDocRef, { createdAt: new Date(), ownerId: userId });
 
             startTrackingAndFirestore();
@@ -400,7 +396,7 @@
                 return;
             }
             
-            const groupDocRef = doc(db, `/artifacts/${appId}/public/data/groups/${groupId}`);
+            const groupDocRef = doc(db, `groups/${groupId}`);
             const groupDoc = await getDoc(groupDocRef);
 
             if (!groupDoc.exists()) {
