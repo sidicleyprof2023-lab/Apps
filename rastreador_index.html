@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rastreador de Localização Simples</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        #map {
+            width: 100%;
+            height: 400px;
+        }
+    </style>
+    <!-- Leaflet.js CDN for the map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
+<body class="bg-gray-100 p-4 min-h-screen flex items-center justify-center">
+
+    <div class="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full transition-all duration-300">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Localização em Grupo</h1>
+        <p class="text-center text-gray-600 mb-6">Compartilhe sua localização e veja a dos outros em tempo real.</p>
+
+        <!-- User Details and Status -->
+        <div id="auth-container" class="mb-6">
+            <div class="p-4 bg-gray-50 rounded-lg shadow-inner">
+                <p class="text-sm font-medium text-gray-500">
+                    Seu ID de Usuário: <span id="user-id" class="text-gray-800 font-bold break-all">Aguardando...</span>
+                </p>
+                <p class="text-sm font-medium text-gray-500 mt-2">
+                    Status: <span id="status-message" class="text-blue-600 font-bold">Iniciando...</span>
+                </p>
+                <p class="text-sm font-medium text-gray-500 mt-2">
+                    Grupo: <span id="group-id-display" class="text-gray-800 font-bold break-all">Nenhum</span>
+                </p>
+            </div>
+        </div>
+
+        <!-- Group Management Section -->
+        <div id="group-container" class="mb-6">
+            <h2 class="text-xl font-semibold mb-2 text-gray-700">Gerenciar Grupo</h2>
+            <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 mb-4">
+                <input
+                    type="text"
+                    id="group-id-input"
+                    placeholder="Cole o ID do grupo..."
+                    class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                    id="join-group-button"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-md"
+                >
+                    Entrar no Grupo
+                </button>
+            </div>
+            <button
+                id="create-group-button"
+                class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-md"
+            >
+                Criar Novo Grupo
+            </button>
+        </div>
+
+        <!-- Map Section -->
+        <div id="map" class="rounded-xl shadow-lg"></div>
+
+        <!-- Message Box -->
+        <div id="message-box-container"></div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        // UI elements
+        const userIdSpan = document.getElementById('user-id');
+        const statusMessageSpan = document.getElementById('status-message');
+        const groupIdInput = document.getElementById('group-id-input');
+        const groupIdDisplay = document.getElementById('group-id-display');
+        const joinGroupButton = document.getElementById('join-group-button');
+        const createGroupButton = document.getElementById('create-group-button');
+
+        let userId = null;
+        let currentGroupId = null;
+        let map = null;
+        let markers = {};
+        let geolocationWatchId = null;
+        let unsubscribe = null;
+
+        // Custom function to display messages instead of alerts
+        const showMessage = (text, type = 'info') => {
+            const container = document.getElementById('message-box-container');
+            container.innerHTML = ''; // Clear previous messages
+            const messageBox = document.createElement('div');
+            messageBox.textContent = text;
+            let classes = 'mt-4 p-4 rounded-xl text-center font-medium';
+            if (type === 'success') classes += ' bg-green-100 text-green-800';
+            if (type === 'error') classes += ' bg-red-100 text-red-800';
+            if (type === 'info') classes += ' bg-blue-100 text-blue-800';
+            messageBox.className = classes;
+            container.appendChild(messageBox);
+        };
+
+        // Initialize the Leaflet map
+        const initMap = () => {
+            if (map) return;
+            map = L.map('map').setView([0, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+        };
+
+        // Geolocation success callback
+        const onLocationSuccess = async (position) => {
+            const { latitude: lat, longitude: lon } = position.coords;
+            if (currentGroupId && userId) {
+                const userDocRef = doc(db, `artifacts/${appId}/public/data/groups/${currentGroupId}/users/${userId}`);
+                try {
+                    await setDoc(userDocRef, {
+                        lat,
+                        lon,
+                        lastUpdate: new Date(),
+                        id: userId
+                    }, { merge: true });
+                    statusMessageSpan.textContent = 'Localização atualizada';
+                } catch (e) {
+                    console.error("Erro ao atualizar a localização:", e);
+                    statusMessageSpan.textContent = "Erro de atualização";
+                }
+            }
+        };
+
+        // Geolocation error callback
+        const onLocationError = (error) => {
+            let errorMessage = "Ocorreu um erro desconhecido na geolocalização.";
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    errorMessage = "Permissão de geolocalização negada. Por favor, habilite a permissão.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    errorMessage = "Localização indisponível. Verifique se o GPS está ativado.";
+                    break;
+                case error.TIMEOUT:
+                    errorMessage = "Tempo limite excedido ao tentar obter a localização.";
+                    break;
+            }
+            statusMessageSpan.textContent = "Erro de localização";
+            showMessage(errorMessage, 'error');
+        };
+
+        // Function to start tracking and Firestore listener
+        const startTrackingAndFirestore = (groupId) => {
+            if (!userId) {
+                showMessage('Usuário não autenticado. Aguarde ou tente novamente.', 'error');
+                return;
+            }
+            // Stop any previous tracking
+            if (geolocationWatchId) {
+                navigator.geolocation.clearWatch(geolocationWatchId);
+            }
+            if (unsubscribe) {
+                unsubscribe();
+            }
+
+            currentGroupId = groupId;
+            groupIdDisplay.textContent = groupId;
+
+            // Start geolocation tracking
+            if (navigator.geolocation) {
+                geolocationWatchId = navigator.geolocation.watchPosition(onLocationSuccess, onLocationError, {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 5000
+                });
+            } else {
+                showMessage('Seu navegador não suporta a Geolocation API.', 'error');
+            }
+
+            // Start real-time Firestore listener
+            const usersCollectionRef = collection(db, `artifacts/${appId}/public/data/groups/${groupId}/users`);
+            unsubscribe = onSnapshot(usersCollectionRef, (querySnapshot) => {
+                const memberIds = {};
+                const allMarkers = [];
+
+                querySnapshot.forEach(doc => {
+                    const userData = doc.data();
+                    const memberId = doc.id;
+                    const lat = userData.lat;
+                    const lon = userData.lon;
+                    memberIds[memberId] = true;
+
+                    // Update or create marker on the map
+                    if (lat && lon) {
+                        if (markers[memberId]) {
+                            markers[memberId].setLatLng([lat, lon]);
+                            markers[memberId].setPopupContent(`<b>Usuário:</b> ${memberId.substring(0, 5)}...`);
+                        } else {
+                            const color = memberId === userId ? 'blue' : 'red';
+                            const newMarker = L.circleMarker([lat, lon], {
+                                radius: 8,
+                                color,
+                                fillColor: color,
+                                fillOpacity: 0.8
+                            }).addTo(map).bindPopup(`<b>Usuário:</b> ${memberId.substring(0, 5)}...`);
+                            markers[memberId] = newMarker;
+                        }
+                        allMarkers.push(markers[memberId]);
+                    }
+                });
+
+                // Remove markers for users who have left the group
+                Object.keys(markers).forEach(memberId => {
+                    if (!memberIds[memberId]) {
+                        map.removeLayer(markers[memberId]);
+                        delete markers[memberId];
+                    }
+                });
+
+                // Fit map to all markers
+                if (allMarkers.length > 0) {
+                    const group = new L.featureGroup(allMarkers);
+                    map.fitBounds(group.getBounds(), { padding: [50, 50] });
+                }
+            });
+
+            showMessage(`Você entrou no grupo com ID: ${groupId}. O rastreamento está ativo.`, 'success');
+        };
+
+        // Event listener for "Create New Group" button
+        createGroupButton.addEventListener('click', async () => {
+            const newGroupId = crypto.randomUUID().substring(0, 8);
+            groupIdInput.value = newGroupId;
+            startTrackingAndFirestore(newGroupId);
+        });
+
+        // Event listener for "Join Group" button
+        joinGroupButton.addEventListener('click', async () => {
+            const groupId = groupIdInput.value.trim();
+            if (!groupId) {
+                showMessage('Por favor, digite um ID de grupo.', 'error');
+                return;
+            }
+            startTrackingAndFirestore(groupId);
+        });
+
+        // Main initialization logic
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                userIdSpan.textContent = userId;
+                statusMessageSpan.textContent = 'Pronto para usar!';
+                initMap();
+            } else {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Erro ao autenticar:", error);
+                    statusMessageSpan.textContent = 'Erro de autenticação';
+                    showMessage('Erro ao autenticar. Por favor, recarregue a página.', 'error');
+                }
+            }
+        });
+    </script>
+</body>
+</html>
