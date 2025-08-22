@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rastreador de Localização Simples</title>
+    <title>Rastreador de Localização em Grupo</title>
     <!-- Tailwind CSS CDN for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -26,19 +26,17 @@
 
     <div class="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full transition-all duration-300">
         <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Localização em Grupo</h1>
-        <p class="text-center text-gray-600 mb-6">Compartilhe sua localização e veja a dos outros em tempo real.</p>
+        <p class="text-center text-gray-600 mb-6">Compartilhe sua localização com seu grupo em tempo real.</p>
 
-        <!-- User Details and Status -->
+        <!-- User Details Section -->
         <div id="auth-container" class="mb-6">
+            <h2 class="text-xl font-semibold mb-2 text-gray-700">Detalhes do Usuário</h2>
             <div class="p-4 bg-gray-50 rounded-lg shadow-inner">
                 <p class="text-sm font-medium text-gray-500">
-                    Seu ID de Usuário: <span id="user-id" class="text-gray-800 font-bold break-all">Aguardando...</span>
+                    Seu ID: <span id="user-id" class="text-gray-800 font-bold break-all">Aguardando...</span>
                 </p>
                 <p class="text-sm font-medium text-gray-500 mt-2">
                     Status: <span id="status-message" class="text-blue-600 font-bold">Iniciando...</span>
-                </p>
-                <p class="text-sm font-medium text-gray-500 mt-2">
-                    Grupo: <span id="group-id-display" class="text-gray-800 font-bold break-all">Nenhum</span>
                 </p>
             </div>
         </div>
@@ -50,7 +48,7 @@
                 <input
                     type="text"
                     id="group-id-input"
-                    placeholder="Cole o ID do grupo..."
+                    placeholder="Digite o ID do grupo..."
                     class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <button
@@ -68,6 +66,15 @@
             </button>
         </div>
 
+        <!-- Admin Panel Section -->
+        <div id="admin-panel" class="mb-6 p-4 bg-gray-50 rounded-lg shadow-inner hidden">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">Painel do Administrador</h2>
+            <p class="text-sm text-gray-500 mb-4">Você é o criador deste grupo. Use a lista abaixo para nomear os membros.</p>
+            <div id="member-list" class="space-y-4">
+                <!-- Member list will be dynamically populated here -->
+            </div>
+        </div>
+
         <!-- Map Section -->
         <div id="map" class="rounded-xl shadow-lg"></div>
 
@@ -79,7 +86,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global variables provided by the Canvas environment
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
@@ -95,12 +102,14 @@
         const userIdSpan = document.getElementById('user-id');
         const statusMessageSpan = document.getElementById('status-message');
         const groupIdInput = document.getElementById('group-id-input');
-        const groupIdDisplay = document.getElementById('group-id-display');
         const joinGroupButton = document.getElementById('join-group-button');
         const createGroupButton = document.getElementById('create-group-button');
+        const adminPanel = document.getElementById('admin-panel');
+        const memberListContainer = document.getElementById('member-list');
 
         let userId = null;
         let currentGroupId = null;
+        let isGroupOwner = false;
         let map = null;
         let markers = {};
         let geolocationWatchId = null;
@@ -151,38 +160,65 @@
 
         // Geolocation error callback
         const onLocationError = (error) => {
-            let errorMessage = "Ocorreu um erro desconhecido na geolocalização.";
-            switch(error.code) {
-                case error.PERMISSION_DENIED:
-                    errorMessage = "Permissão de geolocalização negada. Por favor, habilite a permissão.";
-                    break;
-                case error.POSITION_UNAVAILABLE:
-                    errorMessage = "Localização indisponível. Verifique se o GPS está ativado.";
-                    break;
-                case error.TIMEOUT:
-                    errorMessage = "Tempo limite excedido ao tentar obter a localização.";
-                    break;
+            let errorMessage = '';
+            if (!error || Object.keys(error).length === 0) {
+                errorMessage = "Ocorreu um erro desconhecido. Por favor, verifique as configurações de permissão do navegador.";
+            } else if (error.message) {
+                errorMessage = `Ocorreu um erro na geolocalização: ${error.message}`;
+            } else {
+                switch(error.code) {
+                    case error.PERMISSION_DENIED:
+                        errorMessage = "Permissão de geolocalização negada. Por favor, habilite a permissão.";
+                        break;
+                    case error.POSITION_UNAVAILABLE:
+                        errorMessage = "Localização indisponível. Verifique se o GPS está ativado.";
+                        break;
+                    case error.TIMEOUT:
+                        errorMessage = "Tempo limite excedido ao tentar obter a localização.";
+                        break;
+                    default:
+                        errorMessage = "Ocorreu um erro desconhecido na geolocalização.";
+                }
             }
             statusMessageSpan.textContent = "Erro de localização";
             showMessage(errorMessage, 'error');
         };
 
+        // Function to stop tracking
+        const stopTracking = () => {
+            if (geolocationWatchId) {
+                navigator.geolocation.clearWatch(geolocationWatchId);
+                geolocationWatchId = null;
+            }
+            if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+            }
+            // Remove all markers from the map
+            Object.values(markers).forEach(marker => map.removeLayer(marker));
+            markers = {};
+            currentGroupId = null;
+            adminPanel.classList.add('hidden');
+        };
+
         // Function to start tracking and Firestore listener
-        const startTrackingAndFirestore = (groupId) => {
+        const startTrackingAndFirestore = async (groupId) => {
             if (!userId) {
                 showMessage('Usuário não autenticado. Aguarde ou tente novamente.', 'error');
                 return;
             }
-            // Stop any previous tracking
-            if (geolocationWatchId) {
-                navigator.geolocation.clearWatch(geolocationWatchId);
-            }
-            if (unsubscribe) {
-                unsubscribe();
-            }
-
+            stopTracking();
             currentGroupId = groupId;
-            groupIdDisplay.textContent = groupId;
+
+            // Check group ownership for admin panel
+            const groupDocRef = doc(db, `artifacts/${appId}/public/data/groups/${groupId}`);
+            const groupDoc = await getDoc(groupDocRef);
+            isGroupOwner = groupDoc.exists() && groupDoc.data().ownerId === userId;
+            if (isGroupOwner) {
+                adminPanel.classList.remove('hidden');
+            } else {
+                adminPanel.classList.add('hidden');
+            }
 
             // Start geolocation tracking
             if (navigator.geolocation) {
@@ -198,6 +234,7 @@
             // Start real-time Firestore listener
             const usersCollectionRef = collection(db, `artifacts/${appId}/public/data/groups/${groupId}/users`);
             unsubscribe = onSnapshot(usersCollectionRef, (querySnapshot) => {
+                memberListContainer.innerHTML = ''; // Clear member list for update
                 const memberIds = {};
                 const allMarkers = [];
 
@@ -206,13 +243,15 @@
                     const memberId = doc.id;
                     const lat = userData.lat;
                     const lon = userData.lon;
+                    const name = userData.name || memberId.substring(0, 5) + '...';
+
                     memberIds[memberId] = true;
 
                     // Update or create marker on the map
                     if (lat && lon) {
                         if (markers[memberId]) {
                             markers[memberId].setLatLng([lat, lon]);
-                            markers[memberId].setPopupContent(`<b>Usuário:</b> ${memberId.substring(0, 5)}...`);
+                            markers[memberId].setPopupContent(`<b>${name}</b><br>ID: ${memberId.substring(0, 5)}...`);
                         } else {
                             const color = memberId === userId ? 'blue' : 'red';
                             const newMarker = L.circleMarker([lat, lon], {
@@ -220,11 +259,34 @@
                                 color,
                                 fillColor: color,
                                 fillOpacity: 0.8
-                            }).addTo(map).bindPopup(`<b>Usuário:</b> ${memberId.substring(0, 5)}...`);
+                            }).addTo(map).bindPopup(`<b>${name}</b><br>ID: ${memberId.substring(0, 5)}...`);
                             markers[memberId] = newMarker;
                         }
                         allMarkers.push(markers[memberId]);
                     }
+
+                    // Dynamically create member list items in the admin panel
+                    const memberDiv = document.createElement('div');
+                    memberDiv.className = "flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-3 p-2 bg-gray-100 rounded-md";
+                    memberDiv.innerHTML = `
+                        <p class="text-sm font-mono text-gray-600 break-all flex-grow">
+                            ${memberId === userId ? `Você (ID: ${memberId})` : `ID: ${memberId}`}
+                        </p>
+                        <input
+                            type="text"
+                            placeholder="Nome atual: ${name}"
+                            value="${userData.name || ''}"
+                            data-member-id="${memberId}"
+                            class="p-2 border border-gray-300 rounded-md flex-grow"
+                        />
+                        <button
+                            class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-md transition-colors update-name-button"
+                            data-member-id="${memberId}"
+                        >
+                            Nomear
+                        </button>
+                    `;
+                    memberListContainer.appendChild(memberDiv);
                 });
 
                 // Remove markers for users who have left the group
@@ -240,6 +302,26 @@
                     const group = new L.featureGroup(allMarkers);
                     map.fitBounds(group.getBounds(), { padding: [50, 50] });
                 }
+
+                // Add event listeners for the "Nomear" buttons after they are created
+                document.querySelectorAll('.update-name-button').forEach(button => {
+                    button.addEventListener('click', async () => {
+                        const memberId = button.dataset.memberId;
+                        const newName = document.querySelector(`input[data-member-id='${memberId}']`).value.trim();
+                        if (newName === "") {
+                            showMessage("Por favor, digite um nome válido.", 'error');
+                            return;
+                        }
+                        try {
+                            const userDocRef = doc(db, `artifacts/${appId}/public/data/groups/${currentGroupId}/users/${memberId}`);
+                            await updateDoc(userDocRef, { name: newName });
+                            showMessage(`Nome do membro com ID ${memberId.substring(0, 5)}... atualizado para '${newName}'.`, 'success');
+                        } catch (e) {
+                            console.error("Erro ao atualizar o nome:", e);
+                            showMessage("Erro ao atualizar o nome no servidor.", 'error');
+                        }
+                    });
+                });
             });
 
             showMessage(`Você entrou no grupo com ID: ${groupId}. O rastreamento está ativo.`, 'success');
@@ -247,16 +329,32 @@
 
         // Event listener for "Create New Group" button
         createGroupButton.addEventListener('click', async () => {
+            if (!userId) {
+                showMessage('Usuário não autenticado. Aguarde ou tente novamente.', 'error');
+                return;
+            }
             const newGroupId = crypto.randomUUID().substring(0, 8);
             groupIdInput.value = newGroupId;
+            const groupDocRef = doc(db, `artifacts/${appId}/public/data/groups/${newGroupId}`);
+            await setDoc(groupDocRef, { createdAt: new Date(), ownerId: userId });
             startTrackingAndFirestore(newGroupId);
         });
 
         // Event listener for "Join Group" button
         joinGroupButton.addEventListener('click', async () => {
+            if (!userId) {
+                showMessage('Usuário não autenticado. Aguarde ou tente novamente.', 'error');
+                return;
+            }
             const groupId = groupIdInput.value.trim();
             if (!groupId) {
                 showMessage('Por favor, digite um ID de grupo.', 'error');
+                return;
+            }
+            const groupDocRef = doc(db, `artifacts/${appId}/public/data/groups/${groupId}`);
+            const groupDoc = await getDoc(groupDocRef);
+            if (!groupDoc.exists()) {
+                showMessage(`O grupo com ID '${groupId}' não foi encontrado.`, 'error');
                 return;
             }
             startTrackingAndFirestore(groupId);
